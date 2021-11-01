@@ -1,21 +1,28 @@
 import boto3
 import os
-from lambda_base import generate_csv
+import json#
+import datetime
+from json import JSONEncoder
 
-client = boto3.client('budgets')
+# subclass JSONEncoder
+class DateTimeEncoder(JSONEncoder):
+    # Override the default method
+    def default(self, obj):
+        if isinstance(obj, (datetime.date, datetime.datetime)):
+            return obj.isoformat()
 
-account_id = os.environ['account_id']
-paginator = client.get_paginator("describe_budgets") #Paginator for a large list of accounts
-response_iterator = paginator.paginate(AccountId=account_id)
-for budgets in response_iterator:
+def lambda_handler(event, context):
+    client = boto3.client('budgets')
+
+    account_id = os.environ['account_id']
+    paginator = client.get_paginator("describe_budgets") #Paginator for a large list of accounts
+    response_iterator = paginator.paginate(AccountId=account_id)
+
     #import pdb; pdb.set_trace()
-    csv = generate_csv(budgets['Budgets'])
-file = open("budget.csv", "w")
-file.write(csv)
-file.close()
-
-# for budgets in response_iterator:
-#     for budget in budgets['Budgets']:
-#         print(budget)
-#         budget['BudgetName']
-#         budget['BudgetLimit']['Amount']
+    with open("data.json", "w") as f:
+        for budgets in response_iterator:
+            for budget in budgets['Budgets']:
+                print(budget)
+                dataJSONData = json.dumps(budget, cls=DateTimeEncoder)
+                f.write(dataJSONData)
+                f.write("\n")
