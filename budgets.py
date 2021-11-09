@@ -1,6 +1,6 @@
 import boto3
 import os
-import json#
+import json
 import datetime
 from json import JSONEncoder
 import logging
@@ -14,17 +14,36 @@ class DateTimeEncoder(JSONEncoder):
             return obj.isoformat()
 
 def lambda_handler(event, context):
-    client = boto3.client('budgets')
+    ROLE_ARN = os.environ['ROLE_ARN']
+
+    sts_connection = boto3.client('sts')
+    acct_b = sts_connection.assume_role(
+            RoleArn=ROLE_ARN,
+            RoleSessionName="cross_acct_lambda"
+    )
+                
+    ACCESS_KEY = acct_b['Credentials']['AccessKeyId']
+    SECRET_KEY = acct_b['Credentials']['SecretAccessKey']
+    SESSION_TOKEN = acct_b['Credentials']['SessionToken']
+
+    # # create service client using the assumed role credentials
+    client = boto3.client(
+            "budgets",
+            aws_access_key_id=ACCESS_KEY,
+            aws_secret_access_key=SECRET_KEY,
+            aws_session_token=SESSION_TOKEN,
+    )
 
     account_id = os.environ['ACCOUNT_ID']
     paginator = client.get_paginator("describe_budgets") #Paginator for a large list of accounts
     response_iterator = paginator.paginate(AccountId=account_id)
 
-    #import pdb; pdb.set_trace()
-    with open("/tmp/data.json", "w") as f:
+    with open("data.json", "w") as f:
         for budgets in response_iterator:
             for budget in budgets['Budgets']:
                 print(budget)
+                if len(budget['CostFilters']) == 0:# IF null then add a none value for Crawler
+                    budget.update({'CostFilters': {'Filter': ['None']}})
                 dataJSONData = json.dumps(budget, cls=DateTimeEncoder)
                 f.write(dataJSONData)
                 f.write("\n")
@@ -43,9 +62,10 @@ def s3_upload():
     month = today.month
     try:
         S3BucketName = os.environ["BUCKET_NAME"]
-        s3 = boto3.client('s3', os.environ["REGION"],
+        DestinationPrefix = os.environ["PATH"]
+        s3 = boto3.client('s3', 
                             config=Config(s3={'addressing_style': 'path'}))
-        s3.upload_file(f'/tmp/data.json', S3BucketName, f"Budgets/year={year}/month={month}/budgets-{dt_string}.json")
+        s3.upload_file(f'/tmp/data.json', S3BucketName, f"{DestinationPrefix}/year={year}/month={month}/budgets-{dt_string}.json")
         print(f"Budget data in s3 {S3BucketName}")
     except Exception as e:
         # Send some context about this error to Lambda Logs
@@ -60,6 +80,3 @@ def start_crawler():
     except Exception as e:
         # Send some context about this error to Lambda Logs
         logging.warning("%s" % e)
-
-
-lambda_handler(None, None)
